@@ -1,0 +1,794 @@
+{
+  "name": "Voice Processing Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice/process",
+        "options": {}
+      },
+      "id": "voice-input-webhook",
+      "name": "Voice Input Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "voice-process"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract voice command data\nconst audioData = items[0].json.audio_data;\nconst sessionId = items[0].json.session_id || 'default';\nconst userId = items[0].json.user_id || 'anonymous';\nconst format = items[0].json.format || 'wav';\n\nreturn {\n  json: {\n    audio_data: audioData,\n    session_id: sessionId,\n    user_id: userId,\n    format: format,\n    timestamp: new Date().toISOString(),\n    processing_id: `voice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`\n  }\n};"
+      },
+      "id": "extract-voice-data",
+      "name": "Extract Voice Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/transcribe",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  audio_data: $json.audio_data,\n  session_id: $json.session_id,\n  user_id: $json.user_id,\n  format: $json.format\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "stt-transcription",
+      "name": "STT Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "confidence-check",
+              "leftValue": "={{ $json.confidence }}",
+              "rightValue": 0.6,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "confidence-filter",
+      "name": "Confidence Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Analyze command and determine routing\nconst text = items[0].json.text.toLowerCase();\nconst confidence = items[0].json.confidence;\n\n// Command type detection\nlet commandType = 'conversation';\nlet agentTarget = null;\nlet parameters = {};\n\n// Agent selection patterns\nif (text.includes('talk to') || text.includes('switch to') || text.includes('hey')) {\n  commandType = 'agent_selection';\n  const agents = ['alice', 'bob', 'charlie', 'dana', 'assistant'];\n  for (const agent of agents) {\n    if (text.includes(agent)) {\n      agentTarget = agent;\n      break;\n    }\n  }\n}\n\n// System control patterns\nelse if (text.includes('stop') || text.includes('pause') || text.includes('restart')) {\n  commandType = 'system_control';\n  if (text.includes('stop')) parameters.action = 'stop';\n  if (text.includes('pause')) parameters.action = 'pause';\n  if (text.includes('restart')) parameters.action = 'restart';\n}\n\n// Memory query patterns\nelse if (text.includes('remember') || text.includes('recall') || text.includes('what did')) {\n  commandType = 'memory_query';\n}\n\n// Home automation patterns\nelse if (text.includes('turn on') || text.includes('turn off') || text.includes('lights')) {\n  commandType = 'home_automation';\n  // Extract device and action\n  if (text.includes('lights')) parameters.device = 'lights';\n  if (text.includes('turn on')) parameters.action = 'on';\n  if (text.includes('turn off')) parameters.action = 'off';\n}\n\nreturn {\n  json: {\n    ...items[0].json,\n    command_type: commandType,\n    agent_target: agentTarget,\n    parameters: parameters,\n    routing_confidence: confidence,\n    analysis_timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "command-analysis",
+      "name": "Command Analysis",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": [
+                {
+                  "leftValue": "={{ $json.command_type }}",
+                  "rightValue": "conversation",
+                  "operator": {
+                    "type": "string",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "renameOutput": true,
+              "outputKey": "conversation"
+            },
+            {
+              "conditions": [
+                {
+                  "leftValue": "={{ $json.command_type }}",
+                  "rightValue": "agent_selection",
+                  "operator": {
+                    "type": "string",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "renameOutput": true,
+              "outputKey": "agent_selection"
+            },
+            {
+              "conditions": [
+                {
+                  "leftValue": "={{ $json.command_type }}",
+                  "rightValue": "system_control",
+                  "operator": {
+                    "type": "string",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "renameOutput": true,
+              "outputKey": "system_control"
+            },
+            {
+              "conditions": [
+                {
+                  "leftValue": "={{ $json.command_type }}",
+                  "rightValue": "memory_query",
+                  "operator": {
+                    "type": "string",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "renameOutput": true,
+              "outputKey": "memory_query"
+            },
+            {
+              "conditions": [
+                {
+                  "leftValue": "={{ $json.command_type }}",
+                  "rightValue": "home_automation",
+                  "operator": {
+                    "type": "string",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "renameOutput": true,
+              "outputKey": "home_automation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "command-routing",
+      "name": "Command Routing",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/conversation/process",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: $json.text,\n  session_id: $json.session_id,\n  user_id: $json.user_id,\n  agent_target: $json.agent_target,\n  context: {\n    voice_command: true,\n    confidence: $json.confidence,\n    processing_id: $json.processing_id\n  }\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "conversation-processing",
+      "name": "Conversation Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1400, 100]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/agents/select",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  agent_name: $json.agent_target,\n  session_id: $json.session_id,\n  user_id: $json.user_id,\n  switch_reason: 'voice_command'\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "agent-selection",
+      "name": "Agent Selection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/system/control",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  action: $json.parameters.action,\n  session_id: $json.session_id,\n  user_id: $json.user_id\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "system-control",
+      "name": "System Control",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/memory/search",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  query: $json.text,\n  session_id: $json.session_id,\n  user_id: $json.user_id,\n  limit: 5\n}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "memory-query",
+      "name": "Memory Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1400, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/home/control",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  device: $json.parameters.device,\n  action: $json.parameters.action,\n  location: $json.parameters.location,\n  session_id: $json.session_id\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "home-automation",
+      "name": "Home Automation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1400, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare response for TTS\nconst responseText = items[0].json.response || items[0].json.message || 'Command processed successfully';\nconst sessionId = items[0].json.session_id;\nconst agentSource = items[0].json.agent_name || items[0].json.agent_id || 'system';\n\n// Get voice settings from original context if available\nconst originalData = $('extract-voice-data').all()[0].json;\n\nreturn {\n  json: {\n    text: responseText,\n    session_id: sessionId,\n    agent_source: agentSource,\n    response_type: 'direct_answer',\n    voice_config: {\n      adapt_to_personality: true,\n      emotion_adaptation: true\n    },\n    processing_id: originalData.processing_id,\n    response_timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-tts-response",
+      "name": "Prepare TTS Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/synthesize",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: $json.text,\n  session_id: $json.session_id,\n  agent_source: $json.agent_source,\n  response_type: $json.response_type,\n  voice_config: $json.voice_config\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "tts-synthesis",
+      "name": "TTS Synthesis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1800, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/broadcast",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  audio_data: $json.audio_data,\n  session_id: $json.session_id,\n  response_type: $json.response_type,\n  metadata: {\n    processing_id: $json.processing_id,\n    agent_source: $json.agent_source,\n    synthesis_time: $json.processing_time,\n    audio_format: $json.format\n  }\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "voice-broadcast",
+      "name": "Voice Broadcast",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log voice processing metrics\nconst startTime = $('extract-voice-data').all()[0].json.timestamp;\nconst endTime = new Date().toISOString();\nconst processingTime = new Date(endTime) - new Date(startTime);\n\n// Collect metrics from each stage\nconst transcriptionData = $('stt-transcription').all()[0].json;\nconst synthesisData = $('tts-synthesis').all()[0].json;\n\nconst metrics = {\n  processing_id: $json.processing_id,\n  total_processing_time: processingTime,\n  stt_latency: transcriptionData.processing_time || 0,\n  tts_latency: synthesisData.processing_time || 0,\n  transcription_confidence: transcriptionData.confidence || 0,\n  command_type: $('command-analysis').all()[0].json.command_type,\n  success: true,\n  timestamp: endTime\n};\n\nreturn {\n  json: {\n    ...metrics,\n    voice_response: {\n      audio_data: $json.audio_data,\n      format: $json.format,\n      duration: $json.duration\n    }\n  }\n};"
+      },
+      "id": "collect-metrics",
+      "name": "Collect Metrics",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2200, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/metrics/voice",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  processing_id: $json.processing_id,\n  total_processing_time: $json.total_processing_time,\n  stt_latency: $json.stt_latency,\n  tts_latency: $json.tts_latency,\n  transcription_confidence: $json.transcription_confidence,\n  command_type: $json.command_type,\n  success: $json.success,\n  timestamp: $json.timestamp\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "log-metrics",
+      "name": "Log Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: true,\n  processing_id: $json.processing_id,\n  voice_response: $json.voice_response,\n  metrics: {\n    total_time: $json.total_processing_time,\n    confidence: $json.transcription_confidence\n  }\n}) }}"
+      },
+      "id": "voice-response",
+      "name": "Voice Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2600, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Handle low confidence transcription\nconst confidence = items[0].json.confidence;\nconst text = items[0].json.text;\n\nreturn {\n  json: {\n    error: 'low_confidence_transcription',\n    confidence: confidence,\n    text: text,\n    message: 'Sorry, I didn\\'t understand that clearly. Could you please repeat?',\n    suggestions: [\n      'Speak more clearly',\n      'Move closer to the microphone',\n      'Reduce background noise'\n    ]\n  }\n};"
+      },
+      "id": "low-confidence-handler",
+      "name": "Low Confidence Handler",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/synthesize",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: $json.message,\n  response_type: 'clarification',\n  voice_config: {\n    adapt_to_personality: false,\n    use_default_voice: true\n  }\n}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "clarification-tts",
+      "name": "Clarification TTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: false,\n  error: $json.error,\n  confidence: $json.confidence,\n  message: $json.message,\n  suggestions: $json.suggestions,\n  clarification_audio: $json.audio_data\n}) }}"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1400, 400]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice/stream",
+        "options": {}
+      },
+      "id": "streaming-voice-webhook",
+      "name": "Streaming Voice Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 600],
+      "webhookId": "voice-stream"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Handle streaming voice data\nconst streamData = items[0].json;\n\nreturn {\n  json: {\n    stream_id: streamData.stream_id || `stream_${Date.now()}`,\n    audio_chunk: streamData.audio_chunk,\n    chunk_index: streamData.chunk_index || 0,\n    is_final: streamData.is_final || false,\n    session_id: streamData.session_id || 'default',\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "streaming-processor",
+      "name": "Streaming Processor",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [400, 600]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/stream/process",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  stream_id: $json.stream_id,\n  audio_chunk: $json.audio_chunk,\n  chunk_index: $json.chunk_index,\n  is_final: $json.is_final,\n  session_id: $json.session_id\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "stream-processing",
+      "name": "Stream Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [600, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "final-chunk-check",
+              "leftValue": "={{ $json.is_final }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "final-chunk-check",
+      "name": "Final Chunk Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: true,\n  stream_id: $json.stream_id,\n  chunk_processed: true,\n  partial_transcription: $json.partial_text || null\n}) }}"
+      },
+      "id": "stream-response",
+      "name": "Stream Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [800, 700]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/voice/stream/finalize",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  stream_id: $json.stream_id,\n  session_id: $json.session_id,\n  final_transcription: $json.final_text\n}) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "finalize-stream",
+      "name": "Finalize Stream",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1000, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: true,\n  stream_id: $json.stream_id,\n  final_response: $json.response,\n  audio_response: $json.audio_data || null\n}) }}"
+      },
+      "id": "final-stream-response",
+      "name": "Final Stream Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1200, 500]
+    }
+  ],
+  "connections": {
+    "Voice Input Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Voice Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Voice Data": {
+      "main": [
+        [
+          {
+            "node": "STT Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "STT Transcription": {
+      "main": [
+        [
+          {
+            "node": "Confidence Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Filter": {
+      "main": [
+        [
+          {
+            "node": "Command Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Low Confidence Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command Analysis": {
+      "main": [
+        [
+          {
+            "node": "Command Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command Routing": {
+      "main": [
+        [
+          {
+            "node": "Conversation Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agent Selection",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "System Control",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Memory Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Home Automation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Processing": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Selection": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "System Control": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory Query": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Home Automation": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare TTS Response": {
+      "main": [
+        [
+          {
+            "node": "TTS Synthesis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TTS Synthesis": {
+      "main": [
+        [
+          {
+            "node": "Voice Broadcast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice Broadcast": {
+      "main": [
+        [
+          {
+            "node": "Collect Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Metrics": {
+      "main": [
+        [
+          {
+            "node": "Log Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Metrics": {
+      "main": [
+        [
+          {
+            "node": "Voice Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Low Confidence Handler": {
+      "main": [
+        [
+          {
+            "node": "Clarification TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clarification TTS": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Streaming Voice Webhook": {
+      "main": [
+        [
+          {
+            "node": "Streaming Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Streaming Processor": {
+      "main": [
+        [
+          {
+            "node": "Stream Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stream Processing": {
+      "main": [
+        [
+          {
+            "node": "Final Chunk Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Chunk Check": {
+      "main": [
+        [
+          {
+            "node": "Finalize Stream",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stream Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Stream": {
+      "main": [
+        [
+          {
+            "node": "Final Stream Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "voice-processing",
+      "name": "voice-processing"
+    }
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

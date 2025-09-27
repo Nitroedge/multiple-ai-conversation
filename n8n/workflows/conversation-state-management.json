@@ -1,0 +1,317 @@
+{
+  "name": "Conversation State Management",
+  "description": "Manage conversation state persistence and context sharing across workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "state-update",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-state-update",
+      "name": "State Update Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "state-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate state update data\nconst inputData = items[0].json;\n\n// Validate required fields\nif (!inputData.session_id) {\n  throw new Error('session_id is required');\n}\n\nif (!inputData.state_type) {\n  throw new Error('state_type is required');\n}\n\n// Extract state data\nconst stateUpdate = {\n  session_id: inputData.session_id,\n  state_type: inputData.state_type, // conversation, agent, memory, user_preference\n  state_data: inputData.state_data || {},\n  update_type: inputData.update_type || 'merge', // merge, replace, append\n  timestamp: new Date().toISOString(),\n  source: inputData.source || 'unknown',\n  priority: inputData.priority || 'normal' // high, normal, low\n};\n\n// Add processing metadata\nstateUpdate.processing_id = `state_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\nstateUpdate.processing_stage = 'validated';\n\nreturn [{ json: stateUpdate }];"
+      },
+      "id": "validate-state-data",
+      "name": "Validate State Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.priority }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-priority",
+      "name": "High Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://redis:6379",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 5000
+        },
+        "bodyParametersJson": "{\n  \"command\": \"HSET\",\n  \"args\": [\n    \"session:{{ $json.session_id }}:state\",\n    \"{{ $json.state_type }}\",\n    \"{{ JSON.stringify($json.state_data) }}\",\n    \"last_updated\",\n    \"{{ $json.timestamp }}\",\n    \"update_type\",\n    \"{{ $json.update_type }}\",\n    \"source\",\n    \"{{ $json.source }}\"\n  ]\n}"
+      },
+      "id": "update-redis-state",
+      "name": "Update Redis State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/conversations/{{ $json.session_id }}/state",
+        "authentication": "none",
+        "requestMethod": "PUT",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"state_type\": \"{{ $json.state_type }}\",\n  \"state_data\": {{ JSON.stringify($json.state_data) }},\n  \"update_type\": \"{{ $json.update_type }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\",\n  \"source\": \"{{ $json.source }}\"\n}"
+      },
+      "id": "update-api-state",
+      "name": "Update API State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare state persistence data for MongoDB\nconst data = items[0].json;\n\n// Create comprehensive state document\nconst stateDocument = {\n  session_id: data.session_id,\n  state_type: data.state_type,\n  state_data: data.state_data,\n  update_metadata: {\n    update_type: data.update_type,\n    source: data.source,\n    priority: data.priority,\n    processing_id: data.processing_id,\n    timestamp: data.timestamp\n  },\n  // State versioning for conflict resolution\n  version: Date.now(),\n  expires_at: new Date(Date.now() + (24 * 60 * 60 * 1000)), // 24 hours TTL\n  \n  // Index fields for efficient querying\n  indexed_fields: {\n    session_id: data.session_id,\n    state_type: data.state_type,\n    last_updated: data.timestamp,\n    priority_level: data.priority === 'high' ? 3 : data.priority === 'normal' ? 2 : 1\n  }\n};\n\n// Add state-specific indexing\nif (data.state_type === 'conversation') {\n  stateDocument.indexed_fields.last_speaker = data.state_data.last_speaker;\n  stateDocument.indexed_fields.turn_count = data.state_data.turn_count;\n} else if (data.state_type === 'agent') {\n  stateDocument.indexed_fields.agent_id = data.state_data.agent_id;\n  stateDocument.indexed_fields.emotion_state = data.state_data.emotion_state;\n}\n\nreturn [{ json: stateDocument }];"
+      },
+      "id": "prepare-persistence",
+      "name": "Prepare Persistence Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://mongodb:27017/conversation_engine",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"collection\": \"conversation_states\",\n  \"operation\": \"upsert\",\n  \"filter\": {\n    \"session_id\": \"{{ $json.session_id }}\",\n    \"state_type\": \"{{ $json.state_type }}\"\n  },\n  \"document\": {{ JSON.stringify($json) }},\n  \"options\": {\n    \"upsert\": true\n  }\n}"
+      },
+      "id": "persist-to-mongodb",
+      "name": "Persist to MongoDB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Broadcast state update to WebSocket connections\nconst data = items[0].json;\nconst persistResult = items[1].json;\n\n// Prepare broadcast message\nconst broadcastMessage = {\n  type: 'state_update',\n  session_id: data.session_id,\n  state_type: data.state_type,\n  state_data: data.state_data,\n  update_metadata: {\n    source: data.update_metadata.source,\n    timestamp: data.update_metadata.timestamp,\n    processing_id: data.update_metadata.processing_id\n  },\n  persistence_status: persistResult.acknowledged ? 'persisted' : 'error'\n};\n\nreturn [{ json: broadcastMessage }];"
+      },
+      "id": "prepare-broadcast",
+      "name": "Prepare State Broadcast",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/websocket/broadcast/{{ $json.session_id }}",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "broadcast-update",
+      "name": "Broadcast State Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"state_type\": \"{{ $json.state_type }}\",\n  \"processing_id\": \"{{ $json.processing_id }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\",\n  \"persistence_status\": \"completed\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "State Update Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle state recovery and conflict resolution\nconst data = items[0].json;\n\n// Check for existing state conflicts\nconst conflictCheck = {\n  session_id: data.session_id,\n  state_type: data.state_type,\n  recovery_action: 'conflict_resolution',\n  timestamp: new Date().toISOString()\n};\n\n// Implement conflict resolution strategy\nif (data.update_type === 'replace') {\n  conflictCheck.resolution_strategy = 'force_replace';\n} else {\n  conflictCheck.resolution_strategy = 'merge_with_precedence';\n}\n\nreturn [{ json: conflictCheck }];"
+      },
+      "id": "conflict-resolution",
+      "name": "State Conflict Resolution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/state/recovery",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "state-recovery",
+      "name": "Execute State Recovery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "State Update Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate State Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State Data": {
+      "main": [
+        [
+          {
+            "node": "High Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High Priority?": {
+      "main": [
+        [
+          {
+            "node": "Update Redis State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update API State",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "State Conflict Resolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Redis State": {
+      "main": [
+        [
+          {
+            "node": "Prepare Persistence Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update API State": {
+      "main": [
+        [
+          {
+            "node": "Prepare Persistence Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Persistence Data": {
+      "main": [
+        [
+          {
+            "node": "Persist to MongoDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist to MongoDB": {
+      "main": [
+        [
+          {
+            "node": "Prepare State Broadcast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare State Broadcast": {
+      "main": [
+        [
+          {
+            "node": "Broadcast State Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Broadcast State Update": {
+      "main": [
+        [
+          {
+            "node": "State Update Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Conflict Resolution": {
+      "main": [
+        [
+          {
+            "node": "Execute State Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "conversation-state-management",
+  "tags": [
+    {
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "updatedAt": "2025-01-15T10:30:00.000Z",
+      "id": "2",
+      "name": "state-management"
+    }
+  ]
+}

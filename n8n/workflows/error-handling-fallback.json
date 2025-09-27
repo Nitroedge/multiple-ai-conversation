@@ -1,0 +1,429 @@
+{
+  "name": "Error Handling & Fallback System",
+  "description": "Comprehensive error handling, recovery, and fallback mechanisms for conversation workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "error-handler",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-error-trigger",
+      "name": "Error Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "error-handler"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and categorize error events\nconst inputData = items[0].json;\n\n// Validate required fields\nif (!inputData.error_type || !inputData.source_workflow) {\n  throw new Error('error_type and source_workflow are required');\n}\n\n// Error categorization\nconst errorCategories = {\n  'connection_failed': 'infrastructure',\n  'timeout': 'infrastructure',\n  'invalid_input': 'validation',\n  'agent_unresponsive': 'agent',\n  'memory_overload': 'resource',\n  'api_rate_limit': 'external',\n  'webhook_failure': 'communication',\n  'data_corruption': 'data',\n  'authentication_failed': 'security'\n};\n\nconst errorData = {\n  error_id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  error_type: inputData.error_type,\n  error_category: errorCategories[inputData.error_type] || 'unknown',\n  source_workflow: inputData.source_workflow,\n  session_id: inputData.session_id || null,\n  error_message: inputData.error_message || 'No error message provided',\n  error_details: inputData.error_details || {},\n  timestamp: new Date().toISOString(),\n  \n  // Error severity assessment\n  severity: inputData.severity || 'medium', // low, medium, high, critical\n  \n  // Context information\n  context: {\n    execution_id: inputData.execution_id,\n    node_name: inputData.node_name,\n    user_id: inputData.user_id,\n    agent_id: inputData.agent_id,\n    retry_count: inputData.retry_count || 0\n  },\n  \n  // Recovery strategy flags\n  requires_user_notification: inputData.severity === 'high' || inputData.severity === 'critical',\n  auto_recovery_possible: errorCategories[inputData.error_type] !== 'security',\n  fallback_required: true\n};\n\n// Add specific handling rules based on error type\nswitch (inputData.error_type) {\n  case 'agent_unresponsive':\n    errorData.fallback_strategy = 'switch_agent';\n    errorData.fallback_data = {\n      current_agent: inputData.agent_id,\n      backup_agents: ['OSWALD', 'TONY_KING', 'VICTORIA'].filter(a => a !== inputData.agent_id)\n    };\n    break;\n    \n  case 'memory_overload':\n    errorData.fallback_strategy = 'memory_cleanup';\n    errorData.fallback_data = {\n      cleanup_threshold: 0.8,\n      preserve_important: true\n    };\n    break;\n    \n  case 'connection_failed':\n    errorData.fallback_strategy = 'retry_with_backoff';\n    errorData.fallback_data = {\n      max_retries: 3,\n      backoff_multiplier: 2,\n      initial_delay_ms: 1000\n    };\n    break;\n    \n  default:\n    errorData.fallback_strategy = 'graceful_degradation';\n    errorData.fallback_data = {\n      safe_mode: true,\n      reduced_functionality: true\n    };\n}\n\nreturn [{ json: errorData }];"
+      },
+      "id": "parse-error-event",
+      "name": "Parse Error Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-critical-error",
+      "name": "Critical Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.auto_recovery_possible }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-auto-recovery",
+      "name": "Auto Recovery Possible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle critical errors with immediate escalation\nconst errorData = items[0].json;\n\nconst criticalResponse = {\n  error_id: errorData.error_id,\n  action: 'critical_escalation',\n  timestamp: new Date().toISOString(),\n  \n  // Immediate actions for critical errors\n  immediate_actions: [\n    {\n      action: 'notify_administrators',\n      priority: 'urgent',\n      channels: ['email', 'slack', 'webhook'],\n      message: `Critical error in ${errorData.source_workflow}: ${errorData.error_message}`\n    },\n    {\n      action: 'activate_safe_mode',\n      scope: errorData.session_id ? 'session' : 'global',\n      safe_mode_config: {\n        disable_ai_responses: true,\n        enable_manual_override: true,\n        log_all_interactions: true\n      }\n    },\n    {\n      action: 'preserve_session_state',\n      session_id: errorData.session_id,\n      backup_location: 'emergency_backup',\n      encryption: true\n    }\n  ],\n  \n  // Recovery planning\n  recovery_plan: {\n    requires_manual_intervention: true,\n    estimated_recovery_time: '30-60 minutes',\n    impact_assessment: {\n      affected_sessions: errorData.session_id ? [errorData.session_id] : 'all_active',\n      service_degradation: 'severe',\n      user_notification_required: true\n    }\n  },\n  \n  // Escalation details\n  escalation: {\n    level: 'P1_critical',\n    on_call_engineer: true,\n    incident_response_team: true,\n    status_page_update: true\n  }\n};\n\nreturn [{ json: criticalResponse }];"
+      },
+      "id": "handle-critical-error",
+      "name": "Handle Critical Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Automatic error recovery logic\nconst errorData = items[0].json;\n\nconst recoveryActions = {\n  error_id: errorData.error_id,\n  recovery_strategy: errorData.fallback_strategy,\n  timestamp: new Date().toISOString(),\n  \n  actions: []\n};\n\n// Execute recovery based on strategy\nswitch (errorData.fallback_strategy) {\n  case 'switch_agent':\n    recoveryActions.actions.push({\n      type: 'agent_failover',\n      current_agent: errorData.fallback_data.current_agent,\n      backup_agent: errorData.fallback_data.backup_agents[0],\n      session_id: errorData.session_id,\n      preserve_context: true,\n      notification_message: `Switching from ${errorData.fallback_data.current_agent} to ${errorData.fallback_data.backup_agents[0]} due to unresponsiveness`\n    });\n    break;\n    \n  case 'memory_cleanup':\n    recoveryActions.actions.push({\n      type: 'memory_optimization',\n      session_id: errorData.session_id,\n      cleanup_threshold: errorData.fallback_data.cleanup_threshold,\n      preserve_important: errorData.fallback_data.preserve_important,\n      expected_memory_reduction: '30-50%'\n    });\n    break;\n    \n  case 'retry_with_backoff':\n    const retryCount = errorData.context.retry_count;\n    const delay = errorData.fallback_data.initial_delay_ms * Math.pow(errorData.fallback_data.backoff_multiplier, retryCount);\n    \n    recoveryActions.actions.push({\n      type: 'retry_operation',\n      retry_count: retryCount + 1,\n      delay_ms: Math.min(delay, 30000), // Max 30 second delay\n      max_retries: errorData.fallback_data.max_retries,\n      exponential_backoff: true\n    });\n    break;\n    \n  case 'graceful_degradation':\n    recoveryActions.actions.push({\n      type: 'enable_safe_mode',\n      session_id: errorData.session_id,\n      safe_mode_features: {\n        simple_responses_only: true,\n        disable_complex_workflows: true,\n        enable_manual_fallback: true,\n        increase_logging: true\n      },\n      duration: '1 hour'\n    });\n    break;\n}\n\n// Add monitoring action\nrecoveryActions.actions.push({\n  type: 'enhanced_monitoring',\n  duration: '30 minutes',\n  metrics: ['response_time', 'error_rate', 'memory_usage', 'agent_availability'],\n  alert_threshold: 'low'\n});\n\nreturn [{ json: recoveryActions }];"
+      },
+      "id": "auto-recovery-logic",
+      "name": "Auto Recovery Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.actions[0].type }}",
+              "rightValue": "agent_failover",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-agent-failover",
+      "name": "Agent Failover?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.actions[0].type }}",
+              "rightValue": "memory_optimization",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-memory-cleanup",
+      "name": "Memory Cleanup?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/agents/failover",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"session_id\": \"{{ $json.actions[0].session_id }}\",\n  \"current_agent\": \"{{ $json.actions[0].current_agent }}\",\n  \"backup_agent\": \"{{ $json.actions[0].backup_agent }}\",\n  \"preserve_context\": {{ $json.actions[0].preserve_context }},\n  \"reason\": \"error_recovery\",\n  \"error_id\": \"{{ $json.error_id }}\"\n}"
+      },
+      "id": "execute-agent-failover",
+      "name": "Execute Agent Failover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/memory/cleanup",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"session_id\": \"{{ $json.actions[0].session_id }}\",\n  \"cleanup_threshold\": {{ $json.actions[0].cleanup_threshold }},\n  \"preserve_important\": {{ $json.actions[0].preserve_important }},\n  \"trigger_reason\": \"memory_overload_recovery\",\n  \"error_id\": \"{{ $json.error_id }}\"\n}"
+      },
+      "id": "execute-memory-cleanup",
+      "name": "Execute Memory Cleanup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log error and recovery actions\nconst errorData = items[0].json;\nconst recoveryResult = items[1] ? items[1].json : null;\n\nconst logEntry = {\n  log_id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  timestamp: new Date().toISOString(),\n  event_type: 'error_recovery',\n  \n  error_details: {\n    error_id: errorData.error_id,\n    error_type: errorData.error_type,\n    error_category: errorData.error_category,\n    severity: errorData.severity,\n    source_workflow: errorData.source_workflow,\n    session_id: errorData.session_id\n  },\n  \n  recovery_details: {\n    strategy: errorData.fallback_strategy,\n    auto_recovery_attempted: errorData.auto_recovery_possible,\n    actions_taken: errorData.actions || [],\n    recovery_success: recoveryResult ? recoveryResult.success : null,\n    recovery_time_ms: recoveryResult ? recoveryResult.processing_time : null\n  },\n  \n  impact_assessment: {\n    user_affected: errorData.session_id ? true : false,\n    service_degradation: errorData.severity === 'critical' ? 'severe' : 'minimal',\n    estimated_recovery_time: errorData.severity === 'critical' ? '30-60 minutes' : '1-5 minutes'\n  },\n  \n  // Metadata for analytics\n  metadata: {\n    environment: 'production',\n    version: '1.0.0',\n    correlation_id: errorData.context.execution_id,\n    tags: [errorData.error_category, errorData.fallback_strategy, errorData.severity]\n  }\n};\n\nreturn [{ json: logEntry }];"
+      },
+      "id": "log-error-recovery",
+      "name": "Log Error & Recovery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/logs/store",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "store-error-log",
+      "name": "Store Error Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Send user notification for visible errors\nconst errorData = items[0].json;\n\nif (!errorData.requires_user_notification || !errorData.session_id) {\n  return [{ json: { notification_sent: false, reason: 'not_required' } }];\n}\n\nconst notification = {\n  session_id: errorData.session_id,\n  notification_type: 'error_notification',\n  severity: errorData.severity,\n  message: generateUserFriendlyMessage(errorData),\n  \n  recovery_info: {\n    recovery_in_progress: errorData.auto_recovery_possible,\n    estimated_resolution: errorData.severity === 'critical' ? '30-60 minutes' : '1-5 minutes',\n    alternative_actions: getAlternativeActions(errorData)\n  },\n  \n  timestamp: new Date().toISOString()\n};\n\nfunction generateUserFriendlyMessage(errorData) {\n  switch (errorData.error_type) {\n    case 'agent_unresponsive':\n      return `I'm having trouble responding right now. Switching to another assistant to help you.`;\n    case 'memory_overload':\n      return `I need a moment to organize my thoughts. This may take a few seconds.`;\n    case 'connection_failed':\n      return `I'm experiencing connectivity issues. Attempting to reconnect...`;\n    default:\n      return `I'm experiencing a technical issue but working to resolve it quickly.`;\n  }\n}\n\nfunction getAlternativeActions(errorData) {\n  const alternatives = [];\n  \n  if (errorData.error_category === 'agent') {\n    alternatives.push({\n      action: 'manual_agent_switch',\n      description: 'Switch to a different assistant',\n      available: true\n    });\n  }\n  \n  if (errorData.error_category === 'memory') {\n    alternatives.push({\n      action: 'start_fresh_conversation',\n      description: 'Start a new conversation thread',\n      available: true\n    });\n  }\n  \n  alternatives.push({\n    action: 'contact_support',\n    description: 'Contact technical support',\n    available: true\n  });\n  \n  return alternatives;\n}\n\nreturn [{ json: notification }];"
+      },
+      "id": "prepare-user-notification",
+      "name": "Prepare User Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/websocket/broadcast/{{ $json.session_id }}",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "send-user-notification",
+      "name": "Send User Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"processed\",\n  \"error_id\": \"{{ $json.error_id }}\",\n  \"recovery_strategy\": \"{{ $json.fallback_strategy }}\",\n  \"auto_recovery\": {{ $json.auto_recovery_possible }},\n  \"user_notified\": {{ $json.requires_user_notification }},\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}"
+      },
+      "id": "error-response",
+      "name": "Error Handling Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Error Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Error Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Error Event": {
+      "main": [
+        [
+          {
+            "node": "Critical Error?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Auto Recovery Possible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical Error?": {
+      "main": [
+        [
+          {
+            "node": "Handle Critical Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Auto Recovery Possible?": {
+      "main": [
+        [
+          {
+            "node": "Auto Recovery Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Handle Critical Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare User Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Recovery Logic": {
+      "main": [
+        [
+          {
+            "node": "Agent Failover?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Memory Cleanup?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Error & Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Failover?": {
+      "main": [
+        [
+          {
+            "node": "Execute Agent Failover",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Memory Cleanup?": {
+      "main": [
+        [
+          {
+            "node": "Execute Memory Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Execute Agent Failover": {
+      "main": [
+        [
+          {
+            "node": "Log Error & Recovery",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Execute Memory Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Log Error & Recovery",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Log Error & Recovery": {
+      "main": [
+        [
+          {
+            "node": "Store Error Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Error Handling Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare User Notification": {
+      "main": [
+        [
+          {
+            "node": "Send User Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "error-handling-fallback"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "error-handling-fallback",
+  "tags": [
+    {
+      "createdAt": "2025-01-15T11:30:00.000Z",
+      "updatedAt": "2025-01-15T11:30:00.000Z",
+      "id": "4",
+      "name": "error-handling"
+    }
+  ]
+}

@@ -1,0 +1,396 @@
+{
+  "name": "Session Persistence Manager",
+  "description": "Manage session data persistence, recovery, and cleanup across distributed storage",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "webhook",
+        "webhookId": "session-persistence"
+      },
+      "id": "trigger-session-event",
+      "name": "Session Event Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Route session persistence operations\nconst inputData = items[0].json;\n\n// Validate required fields\nif (!inputData.session_id) {\n  throw new Error('session_id is required');\n}\n\nif (!inputData.operation) {\n  throw new Error('operation is required');\n}\n\n// Supported operations: save, load, cleanup, migrate, backup\nconst supportedOps = ['save', 'load', 'cleanup', 'migrate', 'backup', 'restore'];\nif (!supportedOps.includes(inputData.operation)) {\n  throw new Error(`Unsupported operation: ${inputData.operation}`);\n}\n\nconst sessionData = {\n  session_id: inputData.session_id,\n  operation: inputData.operation,\n  data: inputData.data || {},\n  options: inputData.options || {},\n  timestamp: new Date().toISOString(),\n  processing_id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`\n};\n\n// Add operation-specific metadata\nswitch (inputData.operation) {\n  case 'save':\n    sessionData.save_scope = inputData.options.scope || 'full'; // full, incremental, metadata\n    sessionData.compression = inputData.options.compression || false;\n    break;\n  case 'load':\n    sessionData.load_type = inputData.options.type || 'latest'; // latest, version, timestamp\n    sessionData.include_history = inputData.options.include_history || false;\n    break;\n  case 'cleanup':\n    sessionData.cleanup_age = inputData.options.age_hours || 72;\n    sessionData.preserve_important = inputData.options.preserve_important !== false;\n    break;\n}\n\nreturn [{ json: sessionData }];"
+      },
+      "id": "route-operation",
+      "name": "Route Session Operation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.operation }}",
+              "rightValue": "save",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-save-operation",
+      "name": "Save Operation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.operation }}",
+              "rightValue": "load",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-load-operation",
+      "name": "Load Operation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare comprehensive session save data\nconst data = items[0].json;\n\n// Collect current session state from multiple sources\nconst savePayload = {\n  session_id: data.session_id,\n  save_scope: data.save_scope,\n  timestamp: data.timestamp,\n  processing_id: data.processing_id,\n  \n  // Session metadata\n  session_metadata: {\n    created_at: data.data.created_at || data.timestamp,\n    last_activity: data.timestamp,\n    total_interactions: data.data.interaction_count || 0,\n    active_agents: data.data.active_agents || [],\n    conversation_stage: data.data.conversation_stage || 'active'\n  },\n  \n  // Data collection sources\n  data_sources: [\n    {\n      source: 'redis_working_memory',\n      key_pattern: `session:${data.session_id}:*`,\n      ttl_preserve: true\n    },\n    {\n      source: 'mongodb_conversation_state',\n      collection: 'conversation_states',\n      filter: { session_id: data.session_id }\n    },\n    {\n      source: 'mongodb_memories',\n      collection: 'memories',\n      filter: { session_id: data.session_id },\n      limit: data.save_scope === 'metadata' ? 10 : null\n    }\n  ],\n  \n  // Compression and storage options\n  storage_options: {\n    compress: data.compression,\n    encrypt: false, // TODO: Implement encryption\n    backup_to_s3: false, // TODO: S3 integration\n    retention_days: 30\n  }\n};\n\nreturn [{ json: savePayload }];"
+      },
+      "id": "prepare-session-save",
+      "name": "Prepare Session Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Execute parallel data collection for session save\nconst data = items[0].json;\nconst collectedData = {\n  session_id: data.session_id,\n  collection_timestamp: data.timestamp,\n  processing_id: data.processing_id,\n  \n  // Initialize data containers\n  redis_data: {},\n  mongodb_states: [],\n  mongodb_memories: [],\n  \n  // Collection status\n  collection_status: {\n    redis: 'pending',\n    mongodb_states: 'pending',\n    mongodb_memories: 'pending'\n  },\n  \n  // Collection commands for parallel execution\n  commands: [\n    {\n      id: 'redis_collection',\n      type: 'redis',\n      command: 'HGETALL',\n      args: [`session:${data.session_id}:state`]\n    },\n    {\n      id: 'mongodb_states',\n      type: 'mongodb',\n      database: 'conversation_engine',\n      collection: 'conversation_states',\n      operation: 'find',\n      filter: { session_id: data.session_id }\n    },\n    {\n      id: 'mongodb_memories',\n      type: 'mongodb',\n      database: 'conversation_engine',\n      collection: 'memories',\n      operation: 'find',\n      filter: { session_id: data.session_id },\n      sort: { timestamp: -1 },\n      limit: data.save_scope === 'metadata' ? 10 : 1000\n    }\n  ]\n};\n\nreturn [{ json: collectedData }];"
+      },
+      "id": "collect-session-data",
+      "name": "Collect Session Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/sessions/{{ $json.session_id }}/save",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 30000
+        },
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "execute-session-save",
+      "name": "Execute Session Save",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare session load request\nconst data = items[0].json;\n\nconst loadPayload = {\n  session_id: data.session_id,\n  load_type: data.load_type,\n  include_history: data.include_history,\n  timestamp: data.timestamp,\n  processing_id: data.processing_id,\n  \n  // Load specifications\n  load_specs: {\n    conversation_state: true,\n    working_memory: true,\n    agent_memories: data.include_history,\n    user_preferences: true,\n    interaction_history: data.include_history\n  },\n  \n  // Version/timestamp filters\n  filters: {\n    max_age_hours: data.options.max_age_hours || 168, // 1 week default\n    min_importance: data.options.min_importance || 0.3,\n    agent_filter: data.options.agents || null\n  },\n  \n  // Recovery options\n  recovery_options: {\n    create_if_missing: true,\n    use_backup: true,\n    partial_load_ok: true\n  }\n};\n\nreturn [{ json: loadPayload }];"
+      },
+      "id": "prepare-session-load",
+      "name": "Prepare Session Load",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/sessions/{{ $json.session_id }}/load",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {
+          "timeout": 30000
+        },
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "execute-session-load",
+      "name": "Execute Session Load",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore loaded session data to active systems\nconst loadResult = items[0].json;\n\nconst restoreCommands = {\n  session_id: loadResult.session_id,\n  restore_timestamp: new Date().toISOString(),\n  processing_id: loadResult.processing_id,\n  \n  // Restoration tasks\n  restore_tasks: [\n    {\n      task: 'redis_working_memory',\n      data: loadResult.working_memory_data,\n      commands: loadResult.working_memory_data ? Object.entries(loadResult.working_memory_data).map(([key, value]) => ({\n        type: 'HSET',\n        args: [`session:${loadResult.session_id}:state`, key, JSON.stringify(value)]\n      })) : []\n    },\n    {\n      task: 'conversation_state_restore',\n      data: loadResult.conversation_state,\n      api_endpoint: `/api/conversations/${loadResult.session_id}/state/restore`\n    },\n    {\n      task: 'agent_memory_restore',\n      data: loadResult.agent_memories,\n      batch_size: 50\n    }\n  ],\n  \n  // Validation checks\n  validation: {\n    verify_agent_states: true,\n    check_memory_integrity: true,\n    validate_conversation_continuity: true\n  }\n};\n\nreturn [{ json: restoreCommands }];"
+      },
+      "id": "restore-session-data",
+      "name": "Restore Session Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.operation }}",
+              "rightValue": "cleanup",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-cleanup-operation",
+      "name": "Cleanup Operation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare session cleanup operations\nconst data = items[0].json;\n\nconst cleanupPayload = {\n  session_id: data.session_id,\n  cleanup_age: data.cleanup_age,\n  preserve_important: data.preserve_important,\n  timestamp: data.timestamp,\n  processing_id: data.processing_id,\n  \n  // Cleanup targets\n  cleanup_targets: [\n    {\n      target: 'redis_expired_keys',\n      pattern: `session:${data.session_id}:*`,\n      max_age_hours: data.cleanup_age,\n      preserve_patterns: data.preserve_important ? ['*:important:*', '*:agent_state:*'] : []\n    },\n    {\n      target: 'mongodb_old_memories',\n      collection: 'memories',\n      filter: {\n        session_id: data.session_id,\n        timestamp: { $lt: new Date(Date.now() - (data.cleanup_age * 60 * 60 * 1000)) },\n        importance_score: data.preserve_important ? { $lt: 0.7 } : { $exists: true }\n      }\n    },\n    {\n      target: 'mongodb_conversation_snapshots',\n      collection: 'conversation_states',\n      filter: {\n        session_id: data.session_id,\n        'indexed_fields.last_updated': { $lt: new Date(Date.now() - (data.cleanup_age * 60 * 60 * 1000)) }\n      },\n      keep_latest: 5 // Always keep 5 most recent states\n    }\n  ],\n  \n  // Safety checks\n  safety_checks: {\n    require_backup: true,\n    dry_run_first: false,\n    confirm_deletion: false\n  }\n};\n\nreturn [{ json: cleanupPayload }];"
+      },
+      "id": "prepare-cleanup",
+      "name": "Prepare Session Cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/sessions/{{ $json.session_id }}/cleanup",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{{ JSON.stringify($json) }}"
+      },
+      "id": "execute-cleanup",
+      "name": "Execute Session Cleanup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"operation\": \"{{ $json.operation }}\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"processing_id\": \"{{ $json.processing_id }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\",\n  \"result\": \"{{ JSON.stringify($json.result || {}) }}\"\n}"
+      },
+      "id": "operation-response",
+      "name": "Operation Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 400]
+    }
+  ],
+  "connections": {
+    "Session Event Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route Session Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Session Operation": {
+      "main": [
+        [
+          {
+            "node": "Save Operation?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Operation?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup Operation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Operation?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Save",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Load Operation?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Load",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Cleanup Operation?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Session Save": {
+      "main": [
+        [
+          {
+            "node": "Collect Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Session Data": {
+      "main": [
+        [
+          {
+            "node": "Execute Session Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Session Save": {
+      "main": [
+        [
+          {
+            "node": "Operation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Load": {
+      "main": [
+        [
+          {
+            "node": "Execute Session Load",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Session Load": {
+      "main": [
+        [
+          {
+            "node": "Restore Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Session Data": {
+      "main": [
+        [
+          {
+            "node": "Operation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Execute Session Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Session Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Operation Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "session-persistence",
+  "tags": [
+    {
+      "createdAt": "2025-01-15T11:00:00.000Z",
+      "updatedAt": "2025-01-15T11:00:00.000Z",
+      "id": "3",
+      "name": "persistence"
+    }
+  ]
+}

@@ -1,0 +1,283 @@
+{
+  "name": "Voice Command Processing",
+  "description": "Process voice input through STT, agent routing, and TTS response generation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "voice-command",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-voice-input",
+      "name": "Voice Input Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "voice-command"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate input data\nconst inputData = items[0].json;\n\n// Validate required fields\nif (!inputData.session_id) {\n  throw new Error('session_id is required');\n}\n\n// Determine input type and extract text\nlet inputText = '';\nlet audioMetadata = {};\n\nif (inputData.text_input) {\n  inputText = inputData.text_input;\n} else if (inputData.audio_data || inputData.audio_file) {\n  // For now, mock STT processing\n  inputText = 'Mock transcription: User said something about video games';\n  audioMetadata = {\n    confidence: 0.95,\n    processing_time_ms: 150,\n    audio_length_ms: 3000\n  };\n} else {\n  throw new Error('No valid input provided');\n}\n\n// Prepare output\nconst output = {\n  session_id: inputData.session_id,\n  user_id: inputData.user_id || 'anonymous',\n  input_text: inputText,\n  audio_metadata: audioMetadata,\n  timestamp: new Date().toISOString(),\n  processing_stage: 'input_validated'\n};\n\nreturn [{ json: output }];"
+      },
+      "id": "validate-input",
+      "name": "Validate & Process Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/memory/store",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"content\": \"{{ $json.input_text }}\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"importance_score\": 0.6,\n  \"memory_type\": \"episodic\",\n  \"agent_id\": null,\n  \"context_tags\": [\"voice_input\", \"user_message\"]\n}"
+      },
+      "id": "store-user-memory",
+      "name": "Store User Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent selection logic\nconst data = items[0].json;\nconst inputText = data.input_text.toLowerCase();\n\n// Simple keyword-based agent selection\nlet selectedAgent = 'OSWALD'; // default\n\nif (inputText.includes('sarcasm') || inputText.includes('joke') || inputText.includes('brooklyn') || inputText.includes('new york')) {\n  selectedAgent = 'TONY_KING';\n} else if (inputText.includes('philosophy') || inputText.includes('analysis') || inputText.includes('think') || inputText.includes('deep')) {\n  selectedAgent = 'VICTORIA';\n} else if (inputText.includes('excited') || inputText.includes('amazing') || inputText.includes('wow') || inputText.includes('adventure')) {\n  selectedAgent = 'OSWALD';\n}\n\n// Could also implement round-robin or random selection\n// const agents = ['OSWALD', 'TONY_KING', 'VICTORIA'];\n// selectedAgent = agents[Math.floor(Math.random() * agents.length)];\n\nconst output = {\n  ...data,\n  selected_agent: selectedAgent,\n  selection_reason: 'keyword_analysis',\n  processing_stage: 'agent_selected'\n};\n\nreturn [{ json: output }];"
+      },
+      "id": "select-agent",
+      "name": "Select Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/agents/response",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"agent_id\": \"{{ $json.selected_agent }}\",\n  \"user_input\": \"{{ $json.input_text }}\",\n  \"context\": {\n    \"selection_reason\": \"{{ $json.selection_reason }}\",\n    \"audio_metadata\": \"{{ $json.audio_metadata }}\"\n  }\n}"
+      },
+      "id": "generate-response",
+      "name": "Generate Agent Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process agent response and prepare for TTS\nconst originalData = items[0].json;\nconst agentResponse = items[1].json;\n\n// Extract agent response content\nconst responseContent = agentResponse.response || 'I\\'m processing your message...';\nconst agentId = agentResponse.agent_id || originalData.selected_agent;\n\n// Prepare TTS request\nconst ttsOutput = {\n  session_id: originalData.session_id,\n  agent_id: agentId,\n  response_text: responseContent,\n  voice_config: {\n    provider: 'elevenlabs',\n    voice_id: agentId === 'OSWALD' ? 'Dougsworth' : \n              agentId === 'TONY_KING' ? 'Tony Emperor of New York' : 'Victoria',\n    settings: {\n      stability: 0.75,\n      similarity_boost: 0.85\n    }\n  },\n  processing_stage: 'preparing_tts'\n};\n\nreturn [{ json: ttsOutput }];"
+      },
+      "id": "prepare-tts",
+      "name": "Prepare TTS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mock TTS generation for development\nconst data = items[0].json;\n\n// In production, this would call ElevenLabs API\n// For now, simulate TTS processing\nconst mockAudioData = {\n  audio_url: `http://api:8000/audio/generated/${data.session_id}/${Date.now()}.wav`,\n  audio_duration_ms: data.response_text.length * 50, // Rough estimate\n  voice_synthesis_time_ms: 800,\n  voice_provider: data.voice_config.provider,\n  voice_id: data.voice_config.voice_id\n};\n\nconst finalOutput = {\n  ...data,\n  audio_data: mockAudioData,\n  processing_stage: 'tts_complete',\n  total_processing_time_ms: 2000,\n  workflow_status: 'completed'\n};\n\nreturn [{ json: finalOutput }];"
+      },
+      "id": "generate-tts",
+      "name": "Generate TTS Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"agent_id\": \"{{ $json.agent_id }}\",\n  \"response_text\": \"{{ $json.response_text }}\",\n  \"audio_data\": {{ $json.audio_data }},\n  \"processing_time_ms\": {{ $json.total_processing_time_ms }},\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/memory/store",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"content\": \"{{ $json.response_text }}\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"importance_score\": 0.7,\n  \"memory_type\": \"episodic\",\n  \"agent_id\": \"{{ $json.agent_id }}\",\n  \"context_tags\": [\"agent_response\", \"{{ $json.agent_id.toLowerCase() }}\"]\n}"
+      },
+      "id": "store-agent-memory",
+      "name": "Store Agent Response Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.selected_agent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-agent-selected",
+      "name": "Agent Selected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handling for agent selection failure\nconst data = items[0].json;\n\nconst errorOutput = {\n  ...data,\n  error: 'Agent selection failed',\n  selected_agent: 'OSWALD', // Fallback to default agent\n  selection_reason: 'fallback_default',\n  processing_stage: 'error_recovered'\n};\n\nreturn [{ json: errorOutput }];"
+      },
+      "id": "agent-fallback",
+      "name": "Agent Selection Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 60]
+    }
+  ],
+  "connections": {
+    "Voice Input Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Process Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Process Input": {
+      "main": [
+        [
+          {
+            "node": "Store User Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store User Memory": {
+      "main": [
+        [
+          {
+            "node": "Select Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Agent Selected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Agent": {
+      "main": [
+        [
+          {
+            "node": "Generate Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare TTS": {
+      "main": [
+        [
+          {
+            "node": "Generate TTS Audio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Store Agent Response Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate TTS Audio": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Selected?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Agent Selection Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Selection Fallback": {
+      "main": [
+        [
+          {
+            "node": "Generate Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "voice-command-processing",
+  "tags": [
+    {
+      "createdAt": "2025-01-15T10:00:00.000Z",
+      "updatedAt": "2025-01-15T10:00:00.000Z",
+      "id": "1",
+      "name": "multi-agent"
+    }
+  ]
+}

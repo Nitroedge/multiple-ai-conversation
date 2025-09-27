@@ -1,53 +1,255 @@
-# Multi Agent GPT Characters
-Web app that allows 3 GPT characters and a human to talk to each other.  
-Written by DougDoug. Feel free to use this for whatever you want! Credit is appreciated but not required.  
+# Multi-Agent Conversation Engine v2.0
 
-This is uploaded for educational purposes. Unfortunately I don't have time to offer individual support or review pull requests, but ChatGPT or Claude can be very helpful if you are running into issues.
+A next-generation multi-AI conversation system built with modern architecture, featuring dynamic character personalities, hierarchical memory management, and seamless integration with n8n workflows, Home Assistant, and voice services.
 
-## SETUP:
-1) This was written in Python 3.9.2. Install page here: https://www.python.org/downloads/release/python-392/
+## 🚀 Features
 
-2) Run `pip install -r requirements.txt` to install all modules.
+### Core Architecture
+- **Event-driven orchestration** using n8n workflows
+- **Hierarchical memory system** with Redis working memory and MongoDB long-term storage
+- **Vector-based memory retrieval** using embeddings for contextual responses
+- **Dynamic character personalities** with Big Five psychological model adaptation
+- **Multi-layer safety controls** with ML-based content moderation
 
-3) This uses the OpenAi API and Elevenlabs services. You'll need to set up an account with these services and generate an API key from them. Then add these keys as windows environment variables named OPENAI_API_KEY and ELEVENLABS_API_KEY respectively.
+### Integrations
+- **n8n Workflows**: Automated conversation orchestration and home automation
+- **Home Assistant**: Voice commands and IoT device control
+- **ESP32 Hardware**: Edge audio processing and real-time streaming
+- **Voice Services**: OpenAI Whisper (STT) + ElevenLabs (TTS) with voice cloning
 
-4) This app uses the GPT-4o model from OpenAi. As of this writing (Sep 3rd 2024), you need to pay $5 to OpenAi in order to get access to the GPT-4o model API. So after setting up your account with OpenAi, you will need to pay for at least $5 in credits so that your account is given the permission to use the GPT-4o model when running my app. See here: https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4-gpt-4-turbo-gpt-4o-and-gpt-4o-mini
+### Advanced Features
+- **Real-time WebSocket communication** with animated frontend
+- **Character development tracking** with personality evolution
+- **Conversation analytics** with engagement metrics
+- **Privacy protection** with PII detection and anonymization
+- **Comprehensive audit logging** for regulatory compliance
 
-5) Elevenlabs is the service I use for Ai voices. Once you've made Ai voices on the Elevenlabs website, open up multi_agent_gpt.py and make sure it's passing the name of your voices into each agent's init function.
+## 🏗️ Architecture Overview
 
-6) This app uses the open source Whisper model from OpenAi for transcribing audio into text. This means you'll be running an Ai model locally on your PC, so ideally you have an Nvidia GPU to run this. The Whisper model is used to transcribe the user's microphone recordings, and is used to generate subtitles from the Elevenlabs audio every time an agent "speaks". This model was downloaded from Huggingface and should install automatically when you run the whisper_openai.py file.  
-Note that you'll want to make sure you've installed torch with CUDA support, rather than just default torch, otherwise it will run very slow: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118.  
-If you have issues with the Whisper model there are other services that can offer an audio-to-text service (including a Whisper API), but this solution currently works well for me.
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Frontend      │    │   API Server    │    │   n8n Workflows │
+│   (React)       │◄──►│   (FastAPI)     │◄──►│   (Orchestrate) │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │
+                ┌───────────────┼───────────────┐
+                │               │               │
+        ┌───────▼──────┐ ┌──────▼──────┐ ┌─────▼─────┐
+        │    Redis     │ │   MongoDB   │ │PostgreSQL │
+        │ (Working Mem)│ │(Long Memory)│ │(Analytics)│
+        └──────────────┘ └─────────────┘ └───────────┘
+```
 
-7) This code runs a Flask web app and will display the agents' dialogue using HTML and javascript. By default it will run the server on "127.0.0.1:5151", but you can change this in multi_agent_gpt.py.
+## 🛠️ Technology Stack
 
-8) Optionally, you can use OBS Websockets and an OBS plugin to make images move while talking.  
-First open up OBS. Make sure you're running version 28.X or later. Click Tools, then WebSocket Server Settings. Make sure "Enable WebSocket server" is checked. Then set Server Port to '4455' and set the Server Password to 'TwitchChat9'. If you use a different Server Port or Server Password in your OBS, just make sure you update the websockets_auth.py file accordingly.  
-Next install the Move OBS plugin: https://obsproject.com/forum/resources/move.913/ Now you can use this plugin to add a filter to an audio source that will change an image's transform based on the audio waveform. For example, I have a filter on a specific audio track that will move each agent's bell pepper icon source image whenever that pepper is talking.  
-Note that OBS must be open when you're running this code, otherwise OBS WebSockets won't be able to connect. If you don't need the images to move while talking, you can just delete the OBS portions of the code.
+- **Backend**: FastAPI (Python 3.11+), WebSockets, Celery
+- **Frontend**: React 18, TypeScript, WebSocket client
+- **Databases**: Redis 7 (state), MongoDB 6 (memory), PostgreSQL 16 (analytics)
+- **Orchestration**: n8n workflows, NGINX reverse proxy
+- **AI/ML**: OpenAI GPT-4, Sentence Transformers, scikit-learn
+- **Voice**: OpenAI Whisper, ElevenLabs TTS, WebRTC streaming
+- **Infrastructure**: Docker, Docker Compose, CI/CD pipelines
 
-## Using the App
+## 🚀 Quick Start
 
-To start out, edit the ai_prompts.py file to design each agent's personality and the purpose of their conversation.  
-By default the characters are told to discuss the greatest videogames of all time, but you can change this to anything you want, OpenAi is pretty great at having agents talk about pretty much anything.
+### Prerequisites
+- Docker & Docker Compose
+- OpenAI API key
+- ElevenLabs API key
+- 16GB+ RAM (recommended)
+- NVIDIA GPU (optional, for local Whisper)
 
-Next run multi_agent_gpt.py
+### Development Setup
 
-Once it's running you now have a number of options:
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd multiple-ai-conversation
+   ```
 
-__Press Numpad7 to "talk" to the agents.__  
-Numpad7 will start recording your microphone audio. Hit Numpad8 to stop recording. It will then transcribe your audio into text and add your dialogue into all 3 agents' chat history. Then it will pick a random agent to "activate" and have them start talking next.
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API keys
+   ```
 
-__Numpad1 will "activate" Agent #1.__  
-This means that agent will continue the conversation and start talking. Unless it has been "paused", it will also pick a random other agent and "activate" them to talk next, so that the conversation continues indefinitely.
+3. **Start development environment**
+   ```bash
+   chmod +x start-dev.sh
+   ./start-dev.sh
+   ```
 
-__Numpad2 will "activate" Agent #2, Numpad3 will "activate" Agent #3.__
+4. **Access the application**
+   - Main App: http://localhost:3000
+   - API Docs: http://localhost:8000/docs
+   - n8n Workflows: http://localhost:5678
+   - Development Tools: See start-dev.sh output
 
-__F4 will "pause" all agents__   
-This stops the agents from activating each other. Basically, use this to stop the conversation from continuing any further, and then you can talk to the agents again.
+### Manual Docker Setup
 
-## Miscellaneous notes:
+```bash
+# Start core services
+docker-compose -f docker-compose.dev.yml up -d
 
-All agents will automatically store their "chat history" into a backup txt file as the conversation continues. This is done so that when you restart the program, each agent will automatically load from their backup file and thus restore the entire conversation, letting you continue it from where you left off. If you ever want to fully reset the conversation then just delete the backup txt files in the project.
+# Start with development tools
+docker-compose -f docker-compose.dev.yml --profile dev-tools up -d
 
-If you want to have the agent dialogue displayed in OBS, you should add a browser source and set the URL to "127.0.0.1:5151". 
+# View logs
+docker-compose -f docker-compose.dev.yml logs -f api
+
+# Stop services
+docker-compose -f docker-compose.dev.yml down
+```
+
+## 📋 Development Roadmap
+
+### Phase 1: Foundation (Weeks 1-4) ✅ CURRENT
+- [x] **Sprint 1.1**: Infrastructure setup with Docker orchestration
+- [x] **Sprint 1.2**: Core memory system with hierarchical architecture
+- [ ] **Sprint 1.3**: Basic n8n orchestration workflows
+- [ ] **Sprint 1.4**: Character framework foundation
+
+### Phase 2: Agent System (Weeks 5-8)
+- [ ] **Sprint 2.1**: Multi-agent coordination and communication
+- [ ] **Sprint 2.2**: Voice processing pipeline integration
+- [ ] **Sprint 2.3**: Dynamic character system implementation
+- [ ] **Sprint 2.4**: Basic safety controls and moderation
+
+### Phase 3: Integrations (Weeks 9-12)
+- [ ] **Sprint 3.1**: Home Assistant integration
+- [ ] **Sprint 3.2**: ESP32 hardware interface
+- [ ] **Sprint 3.3**: Advanced voice features
+- [ ] **Sprint 3.4**: Chatterbox integration
+
+### Phase 4: Advanced Features (Weeks 13-16)
+- [ ] **Sprint 4.1**: Advanced safety and moderation
+- [ ] **Sprint 4.2**: Performance optimization
+- [ ] **Sprint 4.3**: Analytics and monitoring
+- [ ] **Sprint 4.4**: Advanced integrations
+
+## 🏛️ System Architecture
+
+### Memory Hierarchy
+```
+Working Memory (Redis)     Long-term Memory (MongoDB)
+├── Active conversations   ├── Consolidated memories
+├── Agent states          ├── Character development
+├── Context cache         ├── Conversation analytics
+└── Session data          └── Vector embeddings
+```
+
+### Character System
+- **Dynamic Personalities**: Big Five model with real-time adaptation
+- **Emotional States**: Multi-dimensional emotion tracking with decay
+- **Memory Integration**: Character-specific memory and relationships
+- **Development Tracking**: Personality evolution over time
+
+### Safety Architecture
+- **Layer 1**: Rule-based input validation
+- **Layer 2**: ML content classification
+- **Layer 3**: Contextual safety evaluation
+- **Layer 4**: Agent response monitoring
+- **Layer 5**: Human oversight and escalation
+
+## 🔧 API Documentation
+
+### Core Endpoints
+- `POST /api/conversations/start` - Start new conversation
+- `GET /api/conversations/{id}/state` - Get conversation state
+- `POST /api/memory/store` - Store memory item
+- `GET /api/memory/search` - Search memories
+- `POST /api/agents/response` - Generate agent response
+
+### WebSocket Events
+- `conversation_message` - New message in conversation
+- `agent_typing` - Agent is generating response
+- `state_update` - Conversation state changed
+- `error` - Error occurred
+
+### n8n Webhooks
+- `/webhook/voice-command` - Process voice input
+- `/webhook/home-automation` - Execute home automation
+- `/webhook/agent-coordination` - Coordinate agent responses
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+docker-compose -f docker-compose.dev.yml exec api pytest
+
+# Run specific test category
+docker-compose -f docker-compose.dev.yml exec api pytest tests/memory/
+docker-compose -f docker-compose.dev.yml exec api pytest tests/agents/
+
+# Run with coverage
+docker-compose -f docker-compose.dev.yml exec api pytest --cov=src
+```
+
+## 📊 Monitoring & Analytics
+
+### Built-in Dashboards
+- **Conversation Analytics**: Engagement metrics, topic analysis
+- **Agent Performance**: Response times, consistency scores
+- **Memory Usage**: Storage optimization, retrieval patterns
+- **Safety Metrics**: Moderation events, risk assessments
+
+### Health Checks
+- `GET /health` - Overall system health
+- `GET /health/redis` - Redis connection status
+- `GET /health/mongodb` - MongoDB connection status
+- `GET /health/memory` - Memory system status
+
+## 🔒 Security & Privacy
+
+### Privacy Protection
+- **PII Detection**: Automatic identification and anonymization
+- **Data Minimization**: Configurable retention policies
+- **Consent Management**: User control over data processing
+- **Audit Trails**: Comprehensive logging for compliance
+
+### Security Measures
+- **Input Validation**: Multi-layer content filtering
+- **Rate Limiting**: API and conversation throttling
+- **Authentication**: JWT-based user authentication
+- **Encryption**: Data at rest and in transit
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests for new functionality
+5. Run the test suite (`pytest`)
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+### Development Guidelines
+- Follow Python PEP 8 style guidelines
+- Add type hints for all functions
+- Write comprehensive tests
+- Update documentation for new features
+- Use conventional commit messages
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Original Multi-Agent GPT by DougDoug
+- OpenAI for GPT-4 and Whisper models
+- ElevenLabs for voice synthesis technology
+- n8n community for workflow automation
+- Home Assistant for IoT integration
+
+## 📞 Support
+
+- **Documentation**: [docs/](docs/)
+- **Issues**: GitHub Issues
+- **Discussions**: GitHub Discussions
+- **Wiki**: [GitHub Wiki](../../wiki)
+
+---
+
+Built with ❤️ by the Multi-Agent Conversation Engine team

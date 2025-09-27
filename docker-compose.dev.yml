@@ -1,0 +1,235 @@
+version: '3.8'
+
+services:
+  # Redis Cluster for State Management and Caching
+  redis-primary:
+    image: redis:7-alpine
+    container_name: redis-primary
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --replica-read-only no
+    volumes:
+      - redis_primary_data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf
+    environment:
+      - REDIS_REPLICATION_MODE=master
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: redis-replica
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --replicaof redis-primary 6379
+    volumes:
+      - redis_replica_data:/data
+    environment:
+      - REDIS_REPLICATION_MODE=slave
+    depends_on:
+      - redis-primary
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # MongoDB for Long-term Memory Storage
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=multi_agent_pass_2024
+      - MONGO_INITDB_DATABASE=multi_agent_conversations
+    volumes:
+      - mongodb_data:/data/db
+      - ./config/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # PostgreSQL for Structured Data and Analytics
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=multi_agent_analytics
+      - POSTGRES_USER=agent_user
+      - POSTGRES_PASSWORD=agent_analytics_2024
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # n8n Workflow Orchestration
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=multi_agent_n8n_2024
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/New_York
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n_workflows
+      - DB_POSTGRESDB_USER=agent_user
+      - DB_POSTGRESDB_PASSWORD=agent_analytics_2024
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/custom-nodes:/home/node/.n8n/custom
+    depends_on:
+      - postgres
+      - redis-primary
+      - mongodb
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # FastAPI Backend Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: multi_agent_api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - REDIS_URL=redis://redis-primary:6379
+      - MONGODB_URL=mongodb://admin:multi_agent_pass_2024@mongodb:27017/multi_agent_conversations?authSource=admin
+      - POSTGRES_URL=postgresql://agent_user:agent_analytics_2024@postgres:5432/multi_agent_analytics
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./audio_cache:/app/audio_cache
+    depends_on:
+      - redis-primary
+      - mongodb
+      - postgres
+      - n8n
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # Web Frontend (React)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: multi_agent_frontend
+    ports:
+      - "8080:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000/ws
+      - REACT_APP_N8N_URL=http://localhost:5678
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - api
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # NGINX Reverse Proxy and Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - api
+      - frontend
+      - n8n
+    networks:
+      - multi_agent_network
+    restart: unless-stopped
+
+  # Redis Commander (Development Tool)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=primary:redis-primary:6379,replica:redis-replica:6379
+    depends_on:
+      - redis-primary
+    networks:
+      - multi_agent_network
+    profiles:
+      - dev-tools
+
+  # MongoDB Express (Development Tool)
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - "8082:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=multi_agent_pass_2024
+      - ME_CONFIG_MONGODB_URL=mongodb://admin:multi_agent_pass_2024@mongodb:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=multi_agent_mongo_2024
+    depends_on:
+      - mongodb
+    networks:
+      - multi_agent_network
+    profiles:
+      - dev-tools
+
+  # pgAdmin (Development Tool)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    ports:
+      - "8083:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@multiagent.dev
+      - PGADMIN_DEFAULT_PASSWORD=multi_agent_pg_2024
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - multi_agent_network
+    profiles:
+      - dev-tools
+
+volumes:
+  redis_primary_data:
+  redis_replica_data:
+  mongodb_data:
+  postgres_data:
+  n8n_data:
+  pgadmin_data:
+
+networks:
+  multi_agent_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

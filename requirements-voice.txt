@@ -1,0 +1,28 @@
+# Voice Processing Dependencies
+# Speech-to-Text (Whisper)
+openai-whisper>=20231117
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Audio Processing
+librosa>=0.10.0
+soundfile>=0.12.0
+scipy>=1.11.0
+numpy>=1.24.0
+pyaudio>=0.2.11
+
+# Text-to-Speech (ElevenLabs)
+elevenlabs>=0.2.0
+aiohttp>=3.8.0
+
+# Additional Audio Utilities
+webrtcvad>=2.0.10  # Voice Activity Detection
+pydub>=0.25.0      # Audio format conversion
+wave>=0.0.2        # WAV file handling
+
+# Optional GPU acceleration
+# torch-audio>=2.0.0  # Uncomment for GPU acceleration
+# cuda-python>=12.0.0  # Uncomment for CUDA support
+
+# Performance monitoring
+psutil>=5.9.0      # System performance monitoring

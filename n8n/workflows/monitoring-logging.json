@@ -1,0 +1,447 @@
+{
+  "name": "System Monitoring & Logging",
+  "description": "Comprehensive monitoring, metrics collection, and logging for the conversation engine",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "webhook",
+        "webhookId": "system-monitor"
+      },
+      "id": "trigger-monitor-event",
+      "name": "Monitor Event Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Route monitoring events and collect initial metrics\nconst inputData = items[0].json;\n\n// Default to system health check if no specific event type\nconst eventType = inputData.event_type || 'health_check';\n\nconst monitoringData = {\n  event_id: `monitor_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  event_type: eventType,\n  timestamp: new Date().toISOString(),\n  source: inputData.source || 'system',\n  \n  // Monitoring categories\n  monitoring_categories: {\n    system_health: eventType === 'health_check' || eventType === 'all',\n    performance_metrics: eventType === 'performance' || eventType === 'all',\n    conversation_analytics: eventType === 'conversations' || eventType === 'all',\n    error_tracking: eventType === 'errors' || eventType === 'all',\n    resource_usage: eventType === 'resources' || eventType === 'all'\n  },\n  \n  // Collection configuration\n  collection_config: {\n    include_detailed_metrics: inputData.detailed || false,\n    time_range_minutes: inputData.time_range || 5,\n    include_historical_comparison: inputData.compare_historical || true,\n    alert_thresholds: inputData.alert_thresholds || {}\n  },\n  \n  // Initialize metric containers\n  metrics: {\n    system: {},\n    performance: {},\n    conversations: {},\n    errors: {},\n    resources: {}\n  }\n};\n\n// Add specific session filtering if provided\nif (inputData.session_id) {\n  monitoringData.session_filter = inputData.session_id;\n  monitoringData.monitoring_categories.conversation_analytics = true;\n}\n\nreturn [{ json: monitoringData }];"
+      },
+      "id": "route-monitoring",
+      "name": "Route Monitoring Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.monitoring_categories.system_health }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-system-health",
+      "name": "Collect System Health?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.monitoring_categories.performance_metrics }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-performance",
+      "name": "Collect Performance?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.monitoring_categories.conversation_analytics }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-conversations",
+      "name": "Collect Conversations?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/health/detailed",
+        "authentication": "none",
+        "requestMethod": "GET",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "collect-system-health",
+      "name": "Collect System Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/system/stats",
+        "authentication": "none",
+        "requestMethod": "GET",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "collect-performance",
+      "name": "Collect Performance Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect conversation analytics\nconst monitoringData = items[0].json;\n\n// Define time range for analytics\nconst timeRangeMinutes = monitoringData.collection_config.time_range_minutes;\nconst endTime = new Date();\nconst startTime = new Date(endTime.getTime() - (timeRangeMinutes * 60 * 1000));\n\nconst analyticsQueries = {\n  timestamp: new Date().toISOString(),\n  time_range: {\n    start: startTime.toISOString(),\n    end: endTime.toISOString(),\n    duration_minutes: timeRangeMinutes\n  },\n  \n  // Queries to execute against MongoDB\n  queries: [\n    {\n      name: 'active_sessions',\n      collection: 'conversation_states',\n      pipeline: [\n        {\n          $match: {\n            timestamp: {\n              $gte: startTime.toISOString(),\n              $lte: endTime.toISOString()\n            }\n          }\n        },\n        {\n          $group: {\n            _id: null,\n            total_sessions: { $sum: 1 },\n            unique_sessions: { $addToSet: '$session_id' },\n            avg_turn_count: { $avg: '$turn_count' }\n          }\n        }\n      ]\n    },\n    {\n      name: 'agent_activity',\n      collection: 'memories',\n      pipeline: [\n        {\n          $match: {\n            timestamp: {\n              $gte: startTime.toISOString(),\n              $lte: endTime.toISOString()\n            },\n            agent_id: { $ne: null }\n          }\n        },\n        {\n          $group: {\n            _id: '$agent_id',\n            message_count: { $sum: 1 },\n            avg_importance: { $avg: '$importance_score' },\n            memory_types: { $addToSet: '$memory_type' }\n          }\n        }\n      ]\n    },\n    {\n      name: 'memory_growth',\n      collection: 'memories',\n      pipeline: [\n        {\n          $match: {\n            timestamp: {\n              $gte: startTime.toISOString(),\n              $lte: endTime.toISOString()\n            }\n          }\n        },\n        {\n          $group: {\n            _id: {\n              $dateToString: {\n                format: '%Y-%m-%d %H:%M',\n                date: { $dateFromString: { dateString: '$timestamp' } }\n              }\n            },\n            memory_count: { $sum: 1 },\n            avg_importance: { $avg: '$importance_score' }\n          }\n        },\n        { $sort: { '_id': 1 } }\n      ]\n    }\n  ],\n  \n  // Session-specific query if filtering by session\n  session_filter: monitoringData.session_filter || null\n};\n\n// Add session-specific queries if filtering\nif (monitoringData.session_filter) {\n  analyticsQueries.queries.push({\n    name: 'session_details',\n    collection: 'conversation_states',\n    pipeline: [\n      {\n        $match: {\n          session_id: monitoringData.session_filter\n        }\n      },\n      {\n        $sort: { timestamp: -1 }\n      },\n      {\n        $limit: 1\n      }\n    ]\n  });\n}\n\nreturn [{ json: analyticsQueries }];"
+      },
+      "id": "prepare-conversation-analytics",
+      "name": "Prepare Conversation Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all collected metrics\nconst monitoringData = items[0].json;\nconst systemHealth = items[1] ? items[1].json : null;\nconst performanceData = items[2] ? items[2].json : null;\nconst conversationAnalytics = items[3] ? items[3].json : null;\n\nconst aggregatedMetrics = {\n  event_id: monitoringData.event_id,\n  timestamp: new Date().toISOString(),\n  collection_duration_ms: Date.now() - new Date(monitoringData.timestamp).getTime(),\n  \n  // System health metrics\n  system_health: systemHealth ? {\n    overall_status: systemHealth.status,\n    component_status: systemHealth.components,\n    healthy_components: Object.values(systemHealth.components || {}).filter(c => c.status === 'healthy').length,\n    total_components: Object.keys(systemHealth.components || {}).length\n  } : { status: 'unavailable' },\n  \n  // Performance metrics\n  performance: performanceData ? {\n    memory_usage: performanceData.memory,\n    connection_stats: performanceData.connections,\n    response_times: {\n      system_health_check_ms: systemHealth ? 1 : null,\n      stats_collection_ms: 2\n    }\n  } : { status: 'unavailable' },\n  \n  // Conversation analytics\n  conversations: conversationAnalytics ? {\n    time_range: conversationAnalytics.time_range,\n    session_filter: conversationAnalytics.session_filter,\n    analytics_queries: conversationAnalytics.queries.length,\n    // Placeholder for actual query results\n    active_sessions: 0,\n    agent_activity: {},\n    memory_growth: []\n  } : { status: 'unavailable' },\n  \n  // Resource utilization\n  resources: {\n    timestamp: new Date().toISOString(),\n    collection_overhead_ms: Date.now() - new Date(monitoringData.timestamp).getTime(),\n    monitoring_categories_collected: Object.values(monitoringData.monitoring_categories).filter(Boolean).length\n  },\n  \n  // Alert evaluation\n  alerts: {\n    triggered_alerts: [],\n    warning_conditions: [],\n    critical_conditions: []\n  }\n};\n\n// Evaluate alert conditions\nif (systemHealth) {\n  if (systemHealth.status === 'degraded') {\n    aggregatedMetrics.alerts.warning_conditions.push({\n      type: 'system_degraded',\n      message: 'One or more system components are unhealthy',\n      severity: 'warning',\n      timestamp: new Date().toISOString()\n    });\n  }\n  \n  if (systemHealth.status === 'unhealthy') {\n    aggregatedMetrics.alerts.critical_conditions.push({\n      type: 'system_critical',\n      message: 'Critical system components are failing',\n      severity: 'critical',\n      timestamp: new Date().toISOString()\n    });\n  }\n}\n\n// Performance alerts\nif (performanceData && performanceData.memory) {\n  const memoryUsage = performanceData.memory.usage_percentage || 0;\n  if (memoryUsage > 80) {\n    aggregatedMetrics.alerts.warning_conditions.push({\n      type: 'high_memory_usage',\n      message: `Memory usage at ${memoryUsage}%`,\n      severity: 'warning',\n      timestamp: new Date().toISOString()\n    });\n  }\n  \n  if (memoryUsage > 95) {\n    aggregatedMetrics.alerts.critical_conditions.push({\n      type: 'critical_memory_usage',\n      message: `Critical memory usage at ${memoryUsage}%`,\n      severity: 'critical',\n      timestamp: new Date().toISOString()\n    });\n  }\n}\n\n// Summary statistics\naggregatedMetrics.summary = {\n  overall_health: aggregatedMetrics.alerts.critical_conditions.length === 0 ? \n    (aggregatedMetrics.alerts.warning_conditions.length === 0 ? 'healthy' : 'warning') : \n    'critical',\n  total_alerts: aggregatedMetrics.alerts.triggered_alerts.length + \n    aggregatedMetrics.alerts.warning_conditions.length + \n    aggregatedMetrics.alerts.critical_conditions.length,\n  data_collection_success: {\n    system_health: systemHealth !== null,\n    performance: performanceData !== null,\n    conversations: conversationAnalytics !== null\n  }\n};\n\nreturn [{ json: aggregatedMetrics }];"
+      },
+      "id": "aggregate-metrics",
+      "name": "Aggregate All Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/logs/store",
+        "authentication": "none",\n        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"log_id\": \"{{ $json.event_id }}\",\n  \"log_type\": \"monitoring_metrics\",\n  \"timestamp\": \"{{ $json.timestamp }}\",\n  \"event_type\": \"monitoring_collection\",\n  \"metrics_data\": {{ JSON.stringify($json) }},\n  \"metadata\": {\n    \"collection_duration_ms\": {{ $json.collection_duration_ms }},\n    \"overall_health\": \"{{ $json.summary.overall_health }}\",\n    \"total_alerts\": {{ $json.summary.total_alerts }}\n  }\n}"
+      },
+      "id": "store-monitoring-data",
+      "name": "Store Monitoring Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "{{ $json.summary.total_alerts }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-alerts",
+      "name": "Alerts Present?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process and format alerts for notification\nconst metricsData = items[0].json;\n\nconst alertNotification = {\n  notification_id: `alert_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  timestamp: new Date().toISOString(),\n  alert_summary: {\n    total_alerts: metricsData.summary.total_alerts,\n    overall_health: metricsData.summary.overall_health,\n    critical_count: metricsData.alerts.critical_conditions.length,\n    warning_count: metricsData.alerts.warning_conditions.length\n  },\n  \n  // Format alerts for different notification channels\n  formatted_alerts: {\n    critical: metricsData.alerts.critical_conditions.map(alert => ({\n      ...alert,\n      formatted_message: `🚨 CRITICAL: ${alert.message}`,\n      requires_immediate_action: true\n    })),\n    warning: metricsData.alerts.warning_conditions.map(alert => ({\n      ...alert,\n      formatted_message: `⚠️ WARNING: ${alert.message}`,\n      requires_monitoring: true\n    }))\n  },\n  \n  // Notification routing\n  notification_channels: {\n    webhook: metricsData.alerts.critical_conditions.length > 0,\n    email: metricsData.alerts.critical_conditions.length > 0,\n    websocket: true, // Always notify connected clients\n    dashboard: true\n  },\n  \n  // Context information\n  context: {\n    event_id: metricsData.event_id,\n    collection_timestamp: metricsData.timestamp,\n    system_status: metricsData.system_health.overall_status,\n    affected_components: Object.entries(metricsData.system_health.component_status || {})\n      .filter(([_, status]) => status.status !== 'healthy')\n      .map(([name, _]) => name)\n  },\n  \n  // Recommended actions\n  recommended_actions: generateRecommendedActions(metricsData.alerts)\n};\n\nfunction generateRecommendedActions(alerts) {\n  const actions = [];\n  \n  // Critical actions\n  alerts.critical_conditions.forEach(alert => {\n    switch (alert.type) {\n      case 'system_critical':\n        actions.push({\n          priority: 'critical',\n          action: 'investigate_system_components',\n          description: 'Check Redis, MongoDB, and API service status',\n          estimated_time: '15-30 minutes'\n        });\n        break;\n      case 'critical_memory_usage':\n        actions.push({\n          priority: 'critical',\n          action: 'execute_memory_cleanup',\n          description: 'Run memory cleanup workflow to free resources',\n          estimated_time: '5-10 minutes'\n        });\n        break;\n    }\n  });\n  \n  // Warning actions\n  alerts.warning_conditions.forEach(alert => {\n    switch (alert.type) {\n      case 'system_degraded':\n        actions.push({\n          priority: 'high',\n          action: 'monitor_degraded_components',\n          description: 'Monitor component recovery and prepare for failover',\n          estimated_time: '10-20 minutes'\n        });\n        break;\n      case 'high_memory_usage':\n        actions.push({\n          priority: 'medium',\n          action: 'schedule_memory_optimization',\n          description: 'Schedule memory consolidation during low usage period',\n          estimated_time: '5-15 minutes'\n        });\n        break;\n    }\n  });\n  \n  return actions;\n}\n\nreturn [{ json: alertNotification }];"
+      },
+      "id": "process-alerts",
+      "name": "Process Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/websocket/broadcast/system",
+        "authentication": "none",
+        "requestMethod": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"type\": \"system_alert\",\n  \"alert_data\": {{ JSON.stringify($json) }},\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}"
+      },
+      "id": "broadcast-alerts",
+      "name": "Broadcast Alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"monitoring_completed\",\n  \"event_id\": \"{{ $json.event_id }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\",\n  \"collection_duration_ms\": {{ $json.collection_duration_ms }},\n  \"overall_health\": \"{{ $json.summary.overall_health }}\",\n  \"total_alerts\": {{ $json.summary.total_alerts }},\n  \"data_collected\": {{ JSON.stringify($json.summary.data_collection_success) }}\n}"
+      },
+      "id": "monitoring-response",
+      "name": "Monitoring Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "mode": "everyMinute"
+        }
+      },
+      "id": "schedule-periodic-monitoring",
+      "name": "Periodic Health Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate periodic monitoring request\nconst periodicMonitoring = {\n  event_type: 'health_check',\n  source: 'periodic_scheduler',\n  detailed: false,\n  time_range: 5, // Last 5 minutes\n  compare_historical: true,\n  \n  alert_thresholds: {\n    memory_usage_warning: 80,\n    memory_usage_critical: 95,\n    response_time_warning: 5000,\n    response_time_critical: 10000,\n    error_rate_warning: 5,\n    error_rate_critical: 10\n  }\n};\n\nreturn [{ json: periodicMonitoring }];"
+      },
+      "id": "prepare-periodic-check",
+      "name": "Prepare Periodic Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    }
+  ],
+  "connections": {
+    "Monitor Event Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route Monitoring Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Monitoring Event": {
+      "main": [
+        [
+          {
+            "node": "Collect System Health?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Collect Performance?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Collect Conversations?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect System Health?": {
+      "main": [
+        [
+          {
+            "node": "Collect System Health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Collect Performance?": {
+      "main": [
+        [
+          {
+            "node": "Collect Performance Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Collect Conversations?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Collect System Health": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Metrics",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Collect Performance Metrics": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Metrics",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Prepare Conversation Analytics": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Metrics",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Aggregate All Metrics": {
+      "main": [
+        [
+          {
+            "node": "Store Monitoring Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alerts Present?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Monitoring Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerts Present?": {
+      "main": [
+        [
+          {
+            "node": "Process Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Process Alerts": {
+      "main": [
+        [
+          {
+            "node": "Broadcast Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Periodic Health Check": {
+      "main": [
+        [
+          {
+            "node": "Prepare Periodic Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Periodic Check": {
+      "main": [
+        [
+          {
+            "node": "Route Monitoring Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "monitoring-logging",
+  "tags": [
+    {
+      "createdAt": "2025-01-15T12:00:00.000Z",
+      "updatedAt": "2025-01-15T12:00:00.000Z",
+      "id": "5",
+      "name": "monitoring"
+    }
+  ]
+}

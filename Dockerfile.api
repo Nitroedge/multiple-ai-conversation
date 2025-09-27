@@ -1,0 +1,64 @@
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    libffi-dev \
+    libssl-dev \
+    libasound2-dev \
+    portaudio19-dev \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install additional AI/ML dependencies
+RUN pip install --no-cache-dir \
+    torch==2.1.0 \
+    transformers==4.35.0 \
+    sentence-transformers==2.2.2 \
+    openai==1.44.0 \
+    elevenlabs==1.7.0 \
+    redis==5.0.1 \
+    pymongo==4.6.0 \
+    asyncpg==0.29.0 \
+    fastapi==0.104.0 \
+    uvicorn==0.24.0 \
+    websockets==12.0 \
+    python-multipart==0.0.6 \
+    python-jose==3.3.0 \
+    passlib==1.7.4 \
+    bcrypt==4.1.2
+
+# Copy application code
+COPY src/ ./src/
+COPY config/ ./config/
+
+# Create necessary directories
+RUN mkdir -p /app/audio_cache /app/logs /app/tmp
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Start command
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
